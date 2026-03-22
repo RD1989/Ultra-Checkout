@@ -9,7 +9,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
