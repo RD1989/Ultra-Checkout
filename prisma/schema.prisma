@@ -1,0 +1,217 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- MULTI-TENANT CORE ---
+
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logoUrl     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Payment Configuration
+  paymentProvider  String   @default("EFI") // EFI, MERCADOPAGO, STRIPE, PUSHINPAY, HYPERCASH
+  paymentConfig    Json?     // Armazena credenciais (API Keys, Secrets) de forma flexível
+  
+  facebookPixelId String?
+  facebookCapiToken String?
+
+  // System Theme (Configuração Visual)
+  primaryColor    String @default("#2563eb")
+  borderRadius    String @default("16px")
+  fontFamily      String @default("Inter")
+  themeMode       String @default("LIGHT")
+
+  users         User[]
+  products      Product[]
+  customers     Customer[]
+  orders        Order[]
+  webhookEvents WebhookEvent[]
+  plans         Plan[]
+  subscriptions Subscription[]
+  auditLogs     AuditLog[]
+
+  @@index([slug])
+}
+
+enum UserRole {
+  ADMIN
+  SUPPORT
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      UserRole @default(ADMIN)
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  auditLogs AuditLog[]
+
+  @@index([tenantId])
+}
+
+// --- CATALOG ---
+
+model Product {
+  id             String      @id @default(cuid())
+  tenantId       String
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  slug           String
+  description    String?     @db.Text
+  price          Decimal     @db.Decimal(10, 2)
+  compareAtPrice Decimal?    @db.Decimal(10, 2)
+  imageUrl       String?
+  seoMetadata    Json?
+  active         Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  checkoutConfig Json?
+  upsellProductId String?
+  upsellProduct   Product? @relation("UpsellRelation", fields: [upsellProductId], references: [id])
+  parentProducts  Product[] @relation("UpsellRelation")
+  orderBumps     OrderBump[] @relation("MainProduct")
+  asOrderBump    OrderBump[] @relation("BumpProduct")
+  orders         Order[]
+  plans          Plan[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, slug])
+}
+
+model OrderBump {
+  id            String  @id @default(cuid())
+  productId     String
+  product       Product @relation("MainProduct", fields: [productId], references: [id], onDelete: Cascade)
+  bumpProductId String
+  bumpProduct   Product @relation("BumpProduct", fields: [bumpProductId], references: [id], onDelete: Cascade)
+  active        Boolean @default(true)
+
+  @@unique([productId, bumpProductId])
+}
+
+// --- CUSTOMERS & SALES ---
+
+model Customer {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  email     String
+  document  String
+  phone     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  orders    Order[]
+  subscriptions Subscription[]
+
+  @@unique([tenantId, email])
+  @@unique([tenantId, document])
+  @@index([tenantId, email])
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  CANCELED
+}
+
+enum PaymentMethod {
+  PIX
+  CREDIT_CARD
+}
+
+model Order {
+  id               String        @id @default(cuid())
+  tenantId         String
+  tenant           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId        String
+  product          Product       @relation(fields: [productId], references: [id])
+  customerId       String
+  customer         Customer      @relation(fields: [customerId], references: [id])
+  status           OrderStatus   @default(PENDING)
+  totalAmount      Decimal       @db.Decimal(10, 2)
+  paymentMethod    PaymentMethod
+  efiTransactionId String?       @unique
+  isUpsell         Boolean       @default(false)
+  metadata         Json?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([tenantId, efiTransactionId])
+  @@index([customerId])
+}
+
+// --- SUBSCRIPTIONS ---
+
+model Plan {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  name        String
+  price       Decimal  @db.Decimal(10, 2)
+  interval    String
+  active      Boolean  @default(true)
+  subscriptions Subscription[]
+  createdAt   DateTime @default(now())
+}
+
+model Subscription {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  planId      String
+  plan        Plan     @relation(fields: [planId], references: [id])
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  status      String
+  nextBilling DateTime
+  createdAt   DateTime @default(now())
+}
+
+// --- SYSTEM LOGS ---
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  provider    String   @default("EFI")
+  eventId     String   @unique
+  payload     Json
+  processedAt DateTime @default(now())
+
+  @@index([tenantId, eventId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  resource  String
+  details   Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
